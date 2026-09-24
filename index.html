@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Certificate Expiry Manager</title>
+<meta name="robots" content="noindex, nofollow"/>
+<meta name="referrer" content="no-referrer"/>
+<!-- Everything runs in the browser. This policy stops the page sending data anywhere:
+     code may only load from cdnjs, and all network requests (fetch/XHR/beacons) are blocked. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; worker-src blob: https://cdnjs.cloudflare.com; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root{
+    --navy:#1a1a2e; --navy-2:#2d2d4e; --ink:#0f172a; --ink-2:#334155; --muted:#475569;
+    --line:#e2e8f0; --bg:#f1f5f9; --card:#fff; --focus:#2563eb;
+    --red:#b91c1c; --red-bg:#fef2f2; --red-bd:#fecaca;
+    --orange:#c2410c; --orange-bg:#fff7ed; --orange-bd:#fed7aa;
+    --amber:#854d0e; --amber-bg:#fefce8; --amber-bd:#fde68a;
+    --green:#15803d; --green-bg:#f0fdf4; --green-bd:#bbf7d0;
+    --grey:#475569; --grey-bg:#f8fafc; --grey-bd:#e2e8f0;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;font-size:15px;line-height:1.45}
+  .app{max-width:1040px;margin:0 auto;padding:24px 16px 48px}
+  :focus-visible{outline:3px solid var(--focus);outline-offset:2px;border-radius:6px}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+  .hdr{display:flex;align-items:center;gap:14px;margin-bottom:22px}
+  .logo{width:44px;height:44px;border-radius:12px;background:var(--navy);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .hdr h1{font-size:22px;font-weight:700;letter-spacing:-.02em}
+  .hdr p{font-size:14px;color:var(--muted);margin-top:2px}
+
+  .nav{display:flex;gap:6px;margin-bottom:18px;border-bottom:1px solid var(--line);padding-bottom:12px;flex-wrap:wrap}
+  .nav-btn{font:inherit;font-size:14px;font-weight:600;padding:8px 16px;border-radius:9px;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--ink-2)}
+  .nav-btn[aria-current="page"]{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .nav-btn:hover:not([aria-current="page"]){background:#e2e8f0}
+
+  .card{background:var(--card);border-radius:14px;border:1px solid var(--line);padding:22px;margin-bottom:16px}
+  .section-title{font-size:17px;font-weight:700;margin-bottom:4px}
+  .text-muted{color:var(--muted);font-size:14px}
+
+  .dropzone{border:2px dashed #94a3b8;border-radius:12px;padding:44px 20px;text-align:center;cursor:pointer;background:#f8fafc;transition:.15s}
+  .dropzone:hover,.dropzone.over{border-color:var(--focus);background:#eff6ff}
+  .dropzone h3{font-size:17px;font-weight:600;margin:10px 0 6px}
+  .dropzone p{font-size:14px;color:var(--muted);margin-bottom:16px}
+
+  .btn{display:inline-flex;align-items:center;gap:7px;font:inherit;font-size:14px;font-weight:600;padding:9px 16px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;color:var(--ink-2);cursor:pointer;transition:.15s;white-space:nowrap}
+  .btn:hover{background:#f1f5f9}
+  .btn-primary{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .btn-primary:hover{background:var(--navy-2)}
+  .btn:disabled{opacity:.55;cursor:default}
+  .btn-sm{font-size:13px;padding:7px 12px}
+  .btn-ok{background:var(--green-bg);color:var(--green);border-color:var(--green-bd)}
+  .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+
+  .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
+  .stat{border-radius:12px;padding:14px 16px;border:1px solid;border-left-width:6px;background:#fff;text-align:left;font:inherit;cursor:pointer}
+  .stat .val{font-size:30px;font-weight:800;line-height:1}
+  .stat .lbl{font-size:13px;font-weight:700;margin-top:6px}
+  .stat .sub{font-size:12px;opacity:.85}
+  .stat[aria-pressed="true"]{box-shadow:0 0 0 3px var(--navy) inset}
+  .s-exp{background:var(--red-bg);border-color:var(--red-bd);border-left-color:var(--red);color:#7f1d1d}
+  .s-urg{background:var(--orange-bg);border-color:var(--orange-bd);border-left-color:var(--orange);color:#7c2d12}
+  .s-due{background:var(--amber-bg);border-color:var(--amber-bd);border-left-color:#ca8a04;color:#713f12}
+  .s-ok{background:var(--green-bg);border-color:var(--green-bd);border-left-color:var(--green);color:#14532d}
+  .s-all{background:#fff;border-color:var(--line);border-left-color:var(--navy);color:var(--ink)}
+
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+  .search{flex:1;min-width:220px;position:relative}
+  .search input{width:100%;padding:10px 12px 10px 36px;font:inherit;font-size:14px;border:1px solid #cbd5e1;border-radius:9px;background:#fff}
+  .search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%)}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .tab{font:inherit;font-size:13px;font-weight:600;padding:6px 13px;border-radius:20px;border:1px solid #cbd5e1;cursor:pointer;background:#fff;color:var(--ink-2);display:inline-flex;align-items:center;gap:6px}
+  .tab[aria-pressed="true"]{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .tab .n{font-weight:500;opacity:.8}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex-shrink:0}
+
+  .notice{display:flex;gap:10px;align-items:flex-start;font-size:14px;padding:12px 14px;border-radius:10px;margin-bottom:14px;border:1px solid}
+  .notice.warn{background:var(--amber-bg);border-color:var(--amber-bd);color:#713f12}
+  .notice.info{background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a}
+  .notice.ok{background:var(--green-bg);border-color:var(--green-bd);color:#14532d}
+
+  .tbl-wrap{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:auto;margin-bottom:14px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  thead th{position:sticky;top:0;background:#f8fafc;text-align:left;font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;padding:10px 14px;border-bottom:1px solid var(--line)}
+  tbody td{padding:10px 14px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+  tr.prop th{background:#f1f5f9;text-align:left;padding:10px 14px;font-size:14px;font-weight:700;color:var(--ink);border-bottom:1px solid var(--line);border-top:1px solid var(--line)}
+  tr.prop .meta{font-weight:500;color:var(--muted);font-size:13px;margin-left:8px}
+  .org-tag{font-size:11px;font-weight:700;background:#ede9fe;color:#4c1d95;padding:2px 8px;border-radius:5px;margin-right:8px;letter-spacing:.02em}
+  tr.r-exp td:first-child{box-shadow:inset 4px 0 0 var(--red)}
+  tr.r-urg td:first-child{box-shadow:inset 4px 0 0 var(--orange)}
+  td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+  .empty{padding:28px;text-align:center;color:var(--muted)}
+
+  .badge{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;padding:3px 10px;border-radius:20px;border:1px solid;white-space:nowrap}
+  .badge svg{flex-shrink:0}
+  .b-exp{background:var(--red);color:#fff;border-color:var(--red)}
+  .b-urg{background:var(--orange);color:#fff;border-color:var(--orange)}
+  .b-due{background:var(--amber-bg);color:#713f12;border-color:#eab308}
+  .b-ok{background:var(--green-bg);color:#14532d;border-color:#86efac}
+  .b-unk{background:var(--grey-bg);color:var(--grey);border-color:#cbd5e1}
+
+  .org-card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;flex-wrap:wrap}
+  .org-card .name{font-size:15px;font-weight:700}
+  .org-card .meta{font-size:13px;color:var(--muted)}
+  .pill{font-weight:700}
+  .pill.exp{color:var(--red)} .pill.urg{color:var(--orange)}
+
+  .opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;background:#f8fafc;border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:16px}
+  .field{margin-bottom:12px}
+  .field label,.opts label.lbl{font-size:13px;font-weight:700;color:var(--ink-2);display:block;margin-bottom:5px}
+  .field input,.field textarea,.field select,.opts input[type=text]{width:100%;padding:9px 12px;font:inherit;font-size:14px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:var(--ink)}
+  .field textarea{min-height:200px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:13px}
+  .check{display:flex;gap:9px;align-items:flex-start;font-size:14px;cursor:pointer}
+  .check input{width:18px;height:18px;margin-top:2px;accent-color:var(--navy)}
+  .check small{display:block;color:var(--muted);font-size:12.5px}
+
+  .msg{font-size:14px;padding:10px 13px;border-radius:9px;margin-top:10px;border:1px solid}
+  .msg.ok{background:var(--green-bg);color:#14532d;border-color:var(--green-bd)}
+  .msg.err{background:var(--red-bg);color:#7f1d1d;border-color:var(--red-bd)}
+  .loading{display:flex;align-items:center;gap:8px;font-size:14px;color:#1e3a8a;padding:10px 14px;background:#eff6ff;border-radius:9px;margin-top:12px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .spin{animation:spin 1s linear infinite}
+  .file-list{margin-top:12px;display:flex;flex-direction:column;gap:6px}
+  .file-item{display:flex;align-items:center;gap:8px;font-size:13px;background:#f8fafc;padding:8px 12px;border-radius:9px;border:1px solid var(--line)}
+  .file-item .sz{margin-left:auto;color:var(--muted)}
+  .assign-row{display:grid;grid-template-columns:1fr 240px;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #f1f5f9}
+  .assign-row select{padding:8px 10px;font:inherit;font-size:14px;border:1px solid #cbd5e1;border-radius:9px;background:#fff}
+  .step{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--navy);color:#fff;font-size:13px;font-weight:700;margin-right:8px;vertical-align:1px}
+  .maprow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
+  .mapstat{flex:1;min-width:220px;font-size:14px;padding:10px 14px;border-radius:9px;border:1px solid}
+  .mapstat.none{background:var(--amber-bg);border-color:var(--amber-bd);color:#713f12}
+  .mapstat.ok{background:var(--green-bg);border-color:var(--green-bd);color:#14532d}
+  .privacy{display:flex;gap:10px;align-items:flex-start;font-size:13px;color:var(--muted);margin-top:4px;padding:0 4px}
+  .hidden{display:none!important}
+
+  @media (max-width:760px){
+    .stats{grid-template-columns:repeat(2,1fr)}
+    .stats .s-all{grid-column:span 2}
+    .assign-row{grid-template-columns:1fr}
+    thead .c-days,td.c-days{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="hdr">
+    <div class="logo" aria-hidden="true">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    </div>
+    <div style="flex:1">
+      <h1>Certificate Expiry Manager</h1>
+      <p>Upload a PDF or Excel expiry report. It's sorted by organisation, then you can download a clear PDF for each one.</p>
+    </div>
+    <button class="btn btn-sm hidden" id="newUploadBtn" onclick="resetApp()">&larr; New upload</button>
+  </header>
+
+  <nav class="nav hidden" id="nav" aria-label="Sections">
+    <button class="nav-btn" data-screen="results" onclick="showScreen('results')">Results</button>
+    <button class="nav-btn" data-screen="pdfs" onclick="showScreen('pdfs')">Download PDFs</button>
+    <button class="nav-btn" data-screen="email" onclick="showScreen('email')">Email summary</button>
+    <button class="nav-btn hidden" data-screen="assign" id="navAssign" onclick="showScreen('assign')">Unmatched addresses</button>
+  </nav>
+
+  <!-- UPLOAD -->
+  <main>
+  <section id="screenUpload" aria-labelledby="upTitle">
+    <div class="card">
+      <h2 class="section-title" id="mapTitle"><span class="step" aria-hidden="true">1</span>Load your address list</h2>
+      <p class="text-muted">A spreadsheet (.csv or .xlsx) of your properties and which organisation manages each one. It stays on your device and isn't stored here, so load it each time you use the site.</p>
+      <div class="maprow">
+        <div class="mapstat none" id="mapStatus" role="status" aria-live="polite">No address list loaded yet. Reports will still open, but every property will show as unassigned.</div>
+        <button class="btn btn-primary" onclick="document.getElementById('mapInput').click()">Load address list</button>
+        <button class="btn" onclick="downloadTemplate()">Blank template</button>
+        <input type="file" id="mapInput" accept=".csv,.xlsx,.xls" class="sr-only" tabindex="-1" onchange="loadMappingFiles(this.files)" aria-labelledby="mapTitle"/>
+      </div>
+    </div>
+    <div class="card">
+      <h2 class="section-title" id="upTitle"><span class="step" aria-hidden="true">2</span>Upload your certificate report</h2>
+      <p class="text-muted" style="margin-bottom:16px">PDF and Excel (.xlsx / .xls) are accepted. You can select several files at once, including your address list; duplicate rows are removed automatically.</p>
+      <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Choose files to upload, or drag and drop them here"
+        ondragover="event.preventDefault();this.classList.add('over')"
+        ondragleave="this.classList.remove('over')"
+        ondrop="handleDrop(event)"
+        onclick="document.getElementById('fileInput').click()"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('fileInput').click()}">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.5" aria-hidden="true"><path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+        <h3>Drag and drop your files here</h3>
+        <p>or</p>
+        <span class="btn btn-primary">Choose files</span>
+        <input type="file" id="fileInput" accept=".pdf,.xlsx,.xls,.csv" multiple class="sr-only" tabindex="-1" onchange="handleFiles(this.files)"/>
+      </div>
+      <div class="file-list hidden" id="fileList"></div>
+      <div id="loadingMsg" role="status" aria-live="polite"></div>
+    </div>
+    <p class="privacy"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="flex-shrink:0;margin-top:2px"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>
+      <span>Private by design: your files are read in this browser only. Nothing is uploaded, saved or sent anywhere, and closing or refreshing the page clears everything.</span></p>
+  </section>
+
+  <!-- RESULTS -->
+  <section id="screenResults" class="hidden" aria-label="Results">
+    <div class="stats" id="statsGrid"></div>
+    <div id="unmatchedNotice"></div>
+    <div class="toolbar">
+      <div class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <label for="searchBox" class="sr-only">Search properties or certificates</label>
+        <input id="searchBox" type="search" placeholder="Search address or certificate type…" oninput="renderTable()"/>
+      </div>
+    </div>
+    <div class="tabs" id="orgTabs" role="group" aria-label="Filter by organisation"></div>
+    <div class="tbl-wrap" id="tableArea"></div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="showScreen('pdfs')">Download PDFs</button>
+      <button class="btn" onclick="showScreen('email')">Email summary</button>
+    </div>
+  </section>
+
+  <!-- PDFS -->
+  <section id="screenPdfs" class="hidden" aria-labelledby="pdfTitle">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+        <div>
+          <h2 class="section-title" id="pdfTitle">PDF reports</h2>
+          <p class="text-muted">One A4 report per organisation: large text, plain-English statuses and the urgent items listed first.</p>
+        </div>
+        <div class="btn-row" style="margin-top:0">
+          <button class="btn" id="btnCombined" onclick="downloadCombined()">Combined report (all)</button>
+          <button class="btn btn-primary" id="btnZip" onclick="downloadZip()">Download all (.zip)</button>
+        </div>
+      </div>
+
+      <div class="opts">
+        <div>
+          <label class="lbl" for="optPreparedBy">Prepared by (optional)</label>
+          <input type="text" id="optPreparedBy" placeholder="e.g. Valor Housing Compliance"/>
+        </div>
+        <label class="check"><input type="checkbox" id="optLarge"/><span>Large print<small>Bigger text, for printing or reading on a phone</small></span></label>
+        <label class="check"><input type="checkbox" id="optValid" checked/><span>Include valid certificates<small>Untick to list only items due within 30 days</small></span></label>
+      </div>
+
+      <div id="orgCardList"></div>
+      <div id="pdfStatus" role="status" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <!-- EMAIL -->
+  <section id="screenEmail" class="hidden" aria-labelledby="emTitle">
+    <div class="card">
+      <h2 class="section-title" id="emTitle" style="margin-bottom:14px">Email summary of urgent items</h2>
+      <div class="field"><label for="emailOrg">Organisation</label>
+        <select id="emailOrg" onchange="prepEmail()"></select></div>
+      <div class="field"><label for="emailTo">To</label><input type="email" id="emailTo" placeholder="recipient@example.com" autocomplete="email"/></div>
+      <div class="field"><label for="emailSubj">Subject</label><input type="text" id="emailSubj"/></div>
+      <div class="field"><label for="emailBody">Message</label><textarea id="emailBody"></textarea></div>
+      <div id="emailStatusMsg" role="status" aria-live="polite"></div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="openMailClient()">Open in mail app</button>
+        <button class="btn" onclick="copyEmailBody()">Copy message</button>
+      </div>
+      <div class="notice info" style="margin-top:14px;margin-bottom:0">Tip: download the PDF for that organisation and attach it to the email. Very long messages may be cut short by some mail apps; use "Copy message" if that happens.</div>
+    </div>
+  </section>
+
+  <!-- ASSIGN -->
+  <section id="screenAssign" class="hidden" aria-labelledby="asTitle">
+    <div class="card">
+      <h2 class="section-title" id="asTitle">Unmatched addresses</h2>
+      <p class="text-muted" style="margin-bottom:10px">These addresses didn't match anything in your address list. Choose an organisation for each, then click Apply. To keep them for next time, download the updated address list and use that file from now on.</p>
+      <div id="assignList"></div>
+      <div class="btn-row"><button class="btn btn-primary" onclick="applyAssignments()">Apply</button>
+        <button class="btn" onclick="downloadMapping()">Download updated address list (.csv)</button></div>
+    </div>
+  </section>
+  </main>
+</div>
+
+<script>
+// ═════════════ CONFIG ═════════════
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+// The address list is loaded by the user at run time (never stored in this file).
+// Each entry: {keys:[...], org, email, address}. Every key must appear in a report address.
+let MAP = [];
+let mapFileName = "";
+const UNMATCHED = "UNASSIGNED";
+
+// Status tiers (shared by app + PDF)
+const TIERS = [
+  {id:0, key:"exp", name:"Expired",  short:"EXPIRED",  rule:"expiry date has passed or is today", meaning:"The expiry date has passed or is today. Renew immediately."},
+  {id:1, key:"urg", name:"Urgent",   short:"URGENT",   rule:"expires in 1 to 14 days", meaning:"Expires within the next 14 days. Book the renewal now."},
+  {id:2, key:"due", name:"Due soon", short:"DUE SOON", rule:"expires in 15 to 30 days", meaning:"Expires in 15 to 30 days. Plan the renewal."},
+  {id:3, key:"ok",  name:"Valid",    short:"VALID",    rule:"more than 30 days left", meaning:"More than 30 days left. No action needed yet."},
+  {id:4, key:"unk", name:"No date",  short:"NO DATE",  rule:"expiry date could not be read", meaning:"The expiry date could not be read from the source report. Check manually."},
+];
+
+let allData = [];
+let activeOrg = "ALL";
+let activeTier = null;
+const manualOrg = {}; // address -> org chosen in-session
+
+// ═════════════ HELPERS ═════════════
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const slug = s => String(s).replace(/[^a-z0-9]+/gi,"_").replace(/^_|_$/g,"");
+const MONTHS = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+const today0 = () => { const d=new Date(); d.setHours(0,0,0,0); return d; };
+const fmtDate = d => d.toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"});
+const isoDate = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+
+function matchOrg(addr) {
+  if (manualOrg[addr]) return manualOrg[addr];
+  const a = " " + addr.toLowerCase().replace(/[,.]/g," ").replace(/\s+/g," ") + " ";
+  for (const {keys,org} of MAP) {
+    // numbers must match as whole house numbers; words can be partial
+    if (keys.every(k => /^\d+[a-z]?$/.test(k) ? new RegExp(`(^|\\s)${k}(\\s|$)`).test(a) : a.includes(k))) return org;
+  }
+  return UNMATCHED;
+}
+
+// Parse UK style dates, ISO, "12 Oct 2026", Excel serials and Date objects
+function parseDate(v) {
+  if (v instanceof Date && !isNaN(v)) return new Date(v.getFullYear(), v.getMonth(), v.getDate());
+  if (typeof v === "number" && v > 20000 && v < 80000) { const d = new Date(Math.round((v-25569)*864e5)); return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); }
+  const s = String(v||"").trim();
+  let m;
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return new Date(+m[1], m[2]-1, +m[3]);
+  if ((m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/))) { let y=+m[3]; if (y<100) y+=2000; return new Date(y, m[2]-1, +m[1]); }
+  if ((m = s.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3})[a-z]*\.?,?\s+(\d{4})$/i))) { const mi = MONTHS.indexOf(m[2].toLowerCase()); if (mi>=0) return new Date(+m[3], mi, +m[1]); }
+  return null;
+}
+
+function getStatus(days) {
+  if (days === null || days === undefined || isNaN(days)) return {tier:4, label:"No date", detail:"Date not readable"};
+  if (days < 0)  return {tier:0, label:"Expired", detail:`${-days} day${days===-1?"":"s"} ago`};
+  if (days === 0) return {tier:0, label:"Expired", detail:"today"};
+  const detail = `${days} day${days===1?"":"s"} left`;
+  if (days <= 14) return {tier:1, label:"Urgent", detail};
+  if (days <= 30) return {tier:2, label:"Due soon", detail};
+  return {tier:3, label:"Valid", detail};
+}
+
+const sortKey = r => r.days === null ? 99999 : r.days;
+function worstTier(rows){ return rows.reduce((t,r)=>Math.min(t, r.tier===4?4:r.tier), 4); }
+function tierDotColor(t){ return ["#b91c1c","#c2410c","#ca8a04","#15803d","#64748b"][t]; }
+function countTiers(rows){ const c=[0,0,0,0,0]; rows.forEach(r=>c[r.tier]++); return c; }
+function orgs(){ return [...new Set(allData.map(r=>r.org))].sort((a,b)=> (a===UNMATCHED) - (b===UNMATCHED) || a.localeCompare(b)); }
+
+const ICONS = {
+  0:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+  1:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 3L2 21h20L12 3z"/><path d="M12 10v4M12 17.5h.01"/></svg>',
+  2:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>',
+  3:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>',
+  4:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M9 9a3 3 0 115 2c-1 1-2 1.5-2 3M12 18h.01"/></svg>',
+};
+const badge = r => `<span class="badge b-${TIERS[r.tier].key}">${ICONS[r.tier]}${esc(r.label)}</span>`;
+
+// ═════════════ ADDRESS LIST ═════════════
+const norm = s => " " + String(s||"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim() + " ";
+// "Flat 2, 14 Example Road" -> ["14","example"]: the house number that is followed by a street word
+function keysFromAddress(addr){
+  const t = norm(addr).trim().split(" ");
+  for (let i = 0; i < t.length - 1; i++)
+    if (/^\d+[a-z]?$/.test(t[i]) && /^[a-z]{3,}$/.test(t[i+1])) return [t[i], t[i+1]];
+  return t.filter(w => w.length >= 3).slice(0, 2);
+}
+// Recognises an address-list sheet: has address + organisation columns and no expiry column
+function mappingColumns(rows){
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    const low = (rows[i]||[]).map(c => String(c).toLowerCase().trim());
+    const f = re => low.findIndex(c => re.test(c));
+    const a = f(/address|property/), o = f(/organi[sz]ation|managing|agent|^org$|landlord|provider/), e = f(/expir|due date|renewal/);
+    if (a >= 0 && o >= 0 && a !== o && e < 0) return {header:i, addr:a, org:o, keys:f(/keyword/), email:f(/e-?mail/)};
+  }
+  return null;
+}
+function applyMappingRows(rows, cols, name){
+  const list = [];
+  for (const r of rows.slice(cols.header + 1)) {
+    const address = String(r[cols.addr] ?? "").trim(), org = String(r[cols.org] ?? "").trim().toUpperCase();
+    if (!address || !org) continue;
+    const kw = cols.keys >= 0 ? String(r[cols.keys] ?? "").toLowerCase().split(/[,;\s]+/).filter(Boolean) : [];
+    const keys = kw.length ? kw : keysFromAddress(address);
+    if (keys.length) list.push({address, org, keys, email: cols.email >= 0 ? String(r[cols.email] ?? "").trim() : ""});
+  }
+  return list;
+}
+async function readTable(file){
+  const wb = XLSX.read(await readBuffer(file), {type:"array", cellDates:true});
+  const rows = [];
+  for (const n of wb.SheetNames) rows.push(...XLSX.utils.sheet_to_json(wb.Sheets[n], {header:1, defval:"", raw:true}));
+  return rows;
+}
+function setMapping(list, name){
+  MAP = list; mapFileName = name;
+  const el = document.getElementById("mapStatus");
+  const orgCount = new Set(list.map(m => m.org)).size;
+  el.className = "mapstat ok";
+  el.textContent = `Loaded ${name}: ${list.length} address${list.length!==1?"es":""} across ${orgCount} organisation${orgCount!==1?"s":""}.`;
+  if (allData.length) refreshAll();
+}
+async function loadMappingFiles(files){
+  const f = files && files[0]; if (!f) return;
+  const el = document.getElementById("mapStatus");
+  try {
+    const rows = await readTable(f), cols = mappingColumns(rows);
+    if (!cols) throw new Error("it needs an 'Address' column and an 'Organisation' column");
+    const list = applyMappingRows(rows, cols, f.name);
+    if (!list.length) throw new Error("no rows with both an address and an organisation were found");
+    setMapping(list, f.name);
+  } catch(e) {
+    el.className = "mapstat none"; el.textContent = `Couldn't use ${f.name}: ${e.message}.`;
+  }
+  document.getElementById("mapInput").value = "";
+}
+const csvCell = v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v ?? "");
+function saveText(text, name, type){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + text], {type})); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+}
+function downloadTemplate(){
+  saveText("Address,Organisation,Email\n1 Example Street Birmingham,EXAMPLE HOUSING LTD,agent@example.com\n", "address_list_template.csv", "text/csv");
+}
+function downloadMapping(){
+  const rows = MAP.map(m => [m.address, m.org, m.email || ""]);
+  for (const [addr, org] of Object.entries(manualOrg)) if (!MAP.some(m => m.address === addr)) rows.push([addr, org, (MAP.find(m=>m.org===org)||{}).email || ""]);
+  if (!rows.length) { alert("There's nothing to download yet. Load an address list or assign some addresses first."); return; }
+  const text = "Address,Organisation,Email\n" + rows.map(r => r.map(csvCell).join(",")).join("\n") + "\n";
+  saveText(text, mapFileName && /\.csv$/i.test(mapFileName) ? mapFileName : "address_list.csv", "text/csv");
+}
+
+// ═════════════ FILE HANDLING ═════════════
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById("dropzone").classList.remove("over");
+  handleFiles(e.dataTransfer.files);
+}
+
+async function handleFiles(files) {
+  if (!files || !files.length) return;
+  const fl = document.getElementById("fileList");
+  fl.innerHTML = [...files].map(f => `<div class="file-item">${esc(f.name)}<span class="sz">${(f.size/1024).toFixed(0)} KB</span></div>`).join("");
+  fl.classList.remove("hidden");
+
+  const rows = [], failed = [];
+  for (const file of files) {
+    showLoading(`Reading ${file.name}…`);
+    try {
+      if (/\.pdf$/i.test(file.name)) rows.push(...await parsePDF(file));
+      else if (/\.(xlsx?|csv)$/i.test(file.name)) {
+        const table = await readTable(file), mc = mappingColumns(table);
+        if (mc) { const list = applyMappingRows(table, mc, file.name); if (list.length) { setMapping(list, file.name); continue; } }
+        rows.push(...parseRows(table));
+      }
+    } catch(e) { console.warn("Error:", file.name, e); failed.push(file.name); }
+  }
+  hideLoading();
+
+  // de-duplicate
+  const seen = new Set();
+  const unique = rows.filter(r => { const k = `${r.address.toLowerCase()}|${r.desc.toLowerCase()}|${r.expiry}`; if (seen.has(k)) return false; seen.add(k); return true; });
+
+  if (!unique.length) {
+    document.getElementById("loadingMsg").innerHTML = `<div class="msg err">No certificate rows were found${failed.length?` (couldn't read: ${esc(failed.join(", "))})`:""}. The report needs columns for address, certificate description and expiry date.</div>`;
+    return;
+  }
+  allData = unique;
+  activeOrg = "ALL"; activeTier = null;
+  refreshAll();
+  showScreen("results");
+  document.getElementById("newUploadBtn").classList.remove("hidden");
+  document.getElementById("nav").classList.remove("hidden");
+}
+
+function readBuffer(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=e=>res(e.target.result); fr.onerror=rej; fr.readAsArrayBuffer(file); }); }
+
+async function parsePDF(file) {
+  const pdf = await pdfjsLib.getDocument({data: await readBuffer(file)}).promise;
+  const rows = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const lines = [];
+    for (const item of content.items) {
+      if (!item.str.trim()) continue;
+      const y = item.transform[5];
+      let line = lines.find(l => Math.abs(l.y - y) < 2.5);   // tolerate small baseline drift
+      if (!line) { line = {y, items:[]}; lines.push(line); }
+      line.items.push({x:item.transform[4], text:item.str.trim()});
+    }
+    lines.sort((a,b)=>b.y-a.y);
+    for (const l of lines) {
+      const texts = l.items.sort((a,b)=>a.x-b.x).map(t=>t.text);
+      if (texts.length >= 3) rows.push(texts);
+    }
+  }
+  return parseRows(rows);
+}
+
+async function parseExcel(file) {
+  const wb = XLSX.read(await readBuffer(file), {type:"array", cellDates:true});
+  const rows = [];
+  for (const name of wb.SheetNames) rows.push(...XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, defval:"", raw:true}));
+  return parseRows(rows);
+}
+
+// Finds columns from a header row if there is one; otherwise uses the original layout
+// [Organisation, Address, Description, Expiry, Days]
+function parseRows(rows) {
+  let col = {addr:1, desc:2, exp:3, days:4};
+  const out = [];
+  for (const cols of rows) {
+    if (!cols || cols.filter(c => String(c).trim()).length < 3) continue;
+    const low = cols.map(c => String(c).toLowerCase());
+    const find = re => low.findIndex(c => re.test(c));
+    const hA = find(/address|property/), hD = find(/descr|certificate|cert type|type/), hE = find(/expir|due date|renewal/);
+    if (hA >= 0 && hD >= 0 && hE >= 0 && hA !== hD) {
+      col = {addr:hA, desc:hD, exp:hE, days: find(/days|remaining/)};
+      continue;
+    }
+    if (low.some(c => /^organi[sz]ation$|^description$/.test(c.trim()))) continue;
+
+    const address = String(cols[col.addr] ?? "").replace(/\s+/g," ").trim();
+    const desc    = String(cols[col.desc] ?? "").replace(/\s+/g," ").trim();
+    if (!address || !desc) continue;
+    const rawExp = cols[col.exp];
+    const date = parseDate(rawExp);
+    let days = null;
+    if (date) days = Math.round((date - today0()) / 864e5);            // always fresh from today
+    else if (col.days >= 0) { const d = parseInt(cols[col.days]); if (!isNaN(d)) days = d; }
+    if (!date && days === null && !String(rawExp).trim()) continue;    // not a data row
+    const st = getStatus(days);
+    out.push({
+      address, desc,
+      expiry: date ? fmtDate(date) : String(rawExp ?? "").trim(),
+      days, tier: st.tier, label: st.label, detail: st.detail,
+      org: matchOrg(address),
+    });
+  }
+  return out;
+}
+
+// ═════════════ RENDER ═════════════
+function refreshAll(){
+  allData.forEach(r => r.org = matchOrg(r.address));
+  renderStats(); renderUnmatched(); renderTabs(); renderTable(); buildPdfCards(); buildEmailOrgs(); prepEmail(); buildAssign();
+}
+
+function renderStats() {
+  const c = countTiers(allData);
+  const items = [
+    {t:null, v:allData.length, l:"All certificates", s:`${new Set(allData.map(r=>r.address)).size} properties`, cls:"s-all"},
+    {t:0, v:c[0], l:"Expired", s:"today or earlier", cls:"s-exp"},
+    {t:1, v:c[1], l:"Urgent", s:"1 to 14 days", cls:"s-urg"},
+    {t:2, v:c[2], l:"Due soon", s:"15 to 30 days", cls:"s-due"},
+    {t:3, v:c[3] + c[4], l:"Valid", s: c[4] ? `incl. ${c[4]} with no date` : "over 30 days", cls:"s-ok"},
+  ];
+  document.getElementById("statsGrid").innerHTML = items.map(i =>
+    `<button class="stat ${i.cls}" aria-pressed="${activeTier===i.t}" onclick="setTier(${i.t})" aria-label="${i.v} ${i.l}. Show only these.">
+      <div class="val">${i.v}</div><div class="lbl">${i.l}</div><div class="sub">${i.s}</div></button>`).join("");
+}
+function setTier(t){ activeTier = (activeTier === t) ? null : t; renderStats(); renderTable(); }
+
+function renderUnmatched(){
+  const n = new Set(allData.filter(r=>r.org===UNMATCHED).map(r=>r.address)).size;
+  document.getElementById("navAssign").classList.toggle("hidden", !n);
+  document.getElementById("unmatchedNotice").innerHTML = n ? `<div class="notice warn" role="alert">
+    <span><strong>${n} address${n>1?"es":""}</strong> ${MAP.length ? "couldn't be matched to your address list" : "aren't assigned because no address list is loaded"} and ${n>1?"are":"is"} listed under ${UNMATCHED}.</span>
+    <button class="btn btn-sm" style="margin-left:auto" onclick="showScreen('assign')">Assign now</button></div>` : "";
+}
+
+function renderTabs() {
+  const list = ["ALL", ...orgs()];
+  document.getElementById("orgTabs").innerHTML = list.map(org => {
+    const rows = org==="ALL" ? allData : allData.filter(r=>r.org===org);
+    return `<button class="tab" aria-pressed="${org===activeOrg}" onclick="setOrg('${esc(org)}')">
+      <span class="dot" style="background:${tierDotColor(worstTier(rows))}" aria-hidden="true"></span>${org==="ALL"?"All organisations":esc(org)} <span class="n">(${rows.length})</span></button>`;
+  }).join("");
+}
+function setOrg(org){ activeOrg = org; renderTabs(); renderTable(); }
+
+function groupByProperty(rows){
+  const map = new Map();
+  for (const r of rows) { if (!map.has(r.address)) map.set(r.address, {org:r.org, rows:[]}); map.get(r.address).rows.push(r); }
+  const groups = [...map.entries()].map(([address,g]) => ({address, org:g.org, rows:g.rows.sort((a,b)=>sortKey(a)-sortKey(b))}));
+  // most urgent property first
+  return groups.sort((a,b)=> sortKey(a.rows[0]) - sortKey(b.rows[0]) || a.address.localeCompare(b.address));
+}
+
+function renderTable() {
+  const q = document.getElementById("searchBox").value.trim().toLowerCase();
+  let rows = activeOrg==="ALL" ? allData : allData.filter(r=>r.org===activeOrg);
+  if (activeTier !== null) rows = rows.filter(r => activeTier===3 ? r.tier>=3 : r.tier===activeTier);
+  if (q) rows = rows.filter(r => (r.address+" "+r.desc+" "+r.org).toLowerCase().includes(q));
+
+  if (!rows.length) { document.getElementById("tableArea").innerHTML = `<div class="empty">No certificates match these filters.</div>`; return; }
+
+  let html = `<table><caption class="sr-only">Certificates grouped by property, most urgent first</caption>
+    <thead><tr><th scope="col">Certificate</th><th scope="col">Expiry date</th><th scope="col" class="c-days">Time left</th><th scope="col">Status</th></tr></thead><tbody>`;
+  for (const g of groupByProperty(rows)) {
+    const c = countTiers(g.rows);
+    const meta = [c[0]?`${c[0]} expired`:"", c[1]?`${c[1]} urgent`:""].filter(Boolean).join(", ");
+    html += `<tr class="prop"><th colspan="4" scope="rowgroup">${activeOrg==="ALL"?`<span class="org-tag">${esc(g.org)}</span>`:""}${esc(g.address)}<span class="meta">${g.rows.length} cert${g.rows.length>1?"s":""}${meta?` · ${meta}`:""}</span></th></tr>`;
+    for (const r of g.rows) {
+      html += `<tr class="r-${TIERS[r.tier].key}"><td>${esc(r.desc)}</td><td class="num">${esc(r.expiry)}</td><td class="num c-days">${esc(r.detail)}</td><td>${badge(r)}</td></tr>`;
+    }
+  }
+  document.getElementById("tableArea").innerHTML = html + "</tbody></table>";
+}
+
+// ═════════════ PDF REPORT ═════════════
+const C = {
+  navy:[26,26,46], ink:[15,23,42], ink2:[51,65,85], muted:[71,85,105], line:[203,213,225], soft:[241,245,249], white:[255,255,255],
+};
+const PDF_TIER = {
+  0:{fill:[185,28,28],  text:[255,255,255], tile:[254,242,242], tileText:[127,29,29], row:[254,242,242]},
+  1:{fill:[194,65,12],  text:[255,255,255], tile:[255,247,237], tileText:[124,45,18], row:[255,247,237]},
+  2:{fill:[254,240,138],text:[113,63,18],   tile:[254,252,232], tileText:[113,63,18], row:null, bar:[202,138,4]},
+  3:{fill:[220,252,231],text:[20,83,45],    tile:[240,253,244], tileText:[20,83,45], row:null, bar:[21,128,61]},
+  4:{fill:[241,245,249],text:[51,65,85],    tile:[248,250,252], tileText:[51,65,85], row:null},
+};
+PDF_TIER[0].bar = PDF_TIER[0].fill; PDF_TIER[1].bar = PDF_TIER[1].fill;
+
+// jsPDF's built-in fonts only cover basic Latin, so normalise anything unusual
+const pdfText = s => String(s ?? "").replace(/[‘’]/g,"'").replace(/[“”]/g,'"').replace(/[–—]/g,"-").replace(/…/g,"...").replace(/[^\x20-\x7E\xA0-\xFF\n]/g,"");
+
+function getPdfOptions(){
+  return {
+    preparedBy: document.getElementById("optPreparedBy").value.trim(),
+    large: document.getElementById("optLarge").checked,
+    includeValid: document.getElementById("optValid").checked,
+  };
+}
+
+function buildReport(records, scopeName, opts) {
+  const {jsPDF} = window.jspdf;
+  const doc = new jsPDF({orientation:"portrait", unit:"mm", format:"a4"});
+  const W = 210, H = 297, M = 15;
+  const fs = opts.large ? 12.5 : 10.5;       // body text size
+  const now = new Date();
+  const genDate = fmtDate(now);
+  const title = "Certificate Expiry Report";
+
+  doc.setProperties({title:`${title} - ${scopeName}`, subject:`Certificate expiry status for ${scopeName}`, author: opts.preparedBy || "Certificate Expiry Manager", keywords:"certificates, compliance, expiry", creator:"Certificate Expiry Manager"});
+  try { doc.setLanguage("en-GB"); } catch(e) {}
+  try { doc.viewerPreferences({DisplayDocTitle:true}); } catch(e) {}
+  doc.setLineHeightFactor(1.3);
+
+  // ── Cover header ──
+  doc.setFillColor(...C.navy); doc.rect(0, 0, W, 38, "F");
+  doc.setTextColor(...C.white);
+  doc.setFont("helvetica","bold"); doc.setFontSize(21); doc.text(title, M, 16);
+  doc.setFont("helvetica","normal"); doc.setFontSize(13.5); doc.text(pdfText(scopeName), M, 26, {maxWidth: 120});
+  doc.setFontSize(10); doc.setFont("helvetica","bold");
+  doc.text(`Report date: ${genDate}`, W-M, 16, {align:"right"});
+  doc.setFont("helvetica","normal");
+  if (opts.preparedBy) doc.text(pdfText(`Prepared by: ${opts.preparedBy}`), W-M, 23, {align:"right", maxWidth:70});
+  let y = 48;
+
+  // ── Summary tiles ──
+  const c = countTiers(records);
+  const props = new Set(records.map(r=>r.address)).size;
+  doc.setTextColor(...C.ink); doc.setFont("helvetica","bold"); doc.setFontSize(14);
+  doc.text("Summary", M, y); y += 3;
+  doc.setFont("helvetica","normal"); doc.setFontSize(fs); doc.setTextColor(...C.ink2);
+  y += 5;
+  doc.text(`${records.length} certificate${records.length!==1?"s":""} across ${props} propert${props!==1?"ies":"y"}.`, M, y);
+  y += 5;
+  const tiles = [
+    {t:0, v:c[0], l:"Expired", s:"today or earlier"},
+    {t:1, v:c[1], l:"Urgent", s:"due in 1-14 days"},
+    {t:2, v:c[2], l:"Due soon", s:"due in 15-30 days"},
+    {t:3, v:c[3]+c[4], l:"Valid", s:"over 30 days"},
+  ];
+  const gap = 4, tw = (W - M*2 - gap*3) / 4, th = opts.large ? 28 : 25;
+  tiles.forEach((tl,i) => {
+    const x = M + i*(tw+gap), p = PDF_TIER[tl.t];
+    doc.setFillColor(...p.tile); doc.roundedRect(x, y, tw, th, 2, 2, "F");
+    doc.setFillColor(...p.bar); doc.rect(x, y, 2.2, th, "F");
+    doc.setTextColor(...p.tileText);
+    doc.setFont("helvetica","bold"); doc.setFontSize(opts.large?24:22); doc.text(String(tl.v), x+6, y+11);
+    doc.setFontSize(opts.large?12:11); doc.text(tl.l, x+6, y+17.5);
+    doc.setFont("helvetica","normal"); doc.setFontSize(opts.large?10:9); doc.text(tl.s, x+6, y+22.5);
+  });
+  y += th + 10;
+
+  // Shared table styling
+  const baseTable = {
+    theme: "grid",
+    margin: {left:M, right:M, top:22, bottom:20},
+    styles: {font:"helvetica", fontSize:fs, textColor:C.ink, cellPadding:{top:2.6,bottom:2.6,left:3,right:3}, lineColor:C.line, lineWidth:0.2, overflow:"linebreak", valign:"middle", minCellHeight: opts.large?10:8.5},
+    headStyles: {fillColor:C.navy, textColor:C.white, fontStyle:"bold", fontSize:fs-1},
+    rowPageBreak: "avoid",
+    showHead: "everyPage",
+  };
+  const statusCell = r => `${TIERS[r.tier].short}\n${r.detail}`;
+  const styleStatus = (data, rec) => {
+    if (data.section !== "body" || !rec) return;
+    const p = PDF_TIER[rec.tier];
+    if (data.column.dataKey === "status") {
+      data.cell.styles.fillColor = p.fill; data.cell.styles.textColor = p.text; data.cell.styles.fontStyle = "bold";
+    } else if (p.row) {
+      data.cell.styles.fillColor = p.row;
+    }
+  };
+  const tableBottom = () => doc.lastAutoTable.finalY;
+  const ensure = need => { if (y + need > H - 22) { doc.addPage(); y = 24; } };
+
+  // ── Action required ──
+  const action = records.filter(r => r.tier <= 1).sort((a,b)=>sortKey(a)-sortKey(b));
+  ensure(30);
+  doc.setTextColor(...C.ink); doc.setFont("helvetica","bold"); doc.setFontSize(14);
+  doc.text("Action required", M, y); y += 2;
+  if (!action.length) {
+    y += 3;
+    doc.setFillColor(240,253,244); doc.setDrawColor(134,239,172); doc.roundedRect(M, y, W-M*2, 12, 2, 2, "FD");
+    doc.setTextColor(20,83,45); doc.setFont("helvetica","bold"); doc.setFontSize(fs);
+    doc.text("Nothing has expired and nothing is due in the next 14 days.", M+5, y+7.6);
+    y += 22;
+  } else {
+    y += 4;
+    doc.setFont("helvetica","normal"); doc.setFontSize(fs); doc.setTextColor(...C.ink2);
+    doc.text(`${action.length} certificate${action.length!==1?"s have":" has"} expired or will expire within 14 days. Most urgent first.`, M, y);
+    y += 3;
+    doc.autoTable({
+      ...baseTable, startY: y,
+      columns: [{header:"Property", dataKey:"addr"},{header:"Certificate", dataKey:"desc"},{header:"Expiry date", dataKey:"exp"},{header:"Status", dataKey:"status"}],
+      body: action.map(r => ({addr:pdfText(r.address), desc:pdfText(r.desc), exp:r.expiry, status:statusCell(r), _r:r})),
+      columnStyles: {addr:{cellWidth:56}, desc:{cellWidth:"auto"}, exp:{cellWidth:28}, status:{cellWidth:34}},
+      didParseCell: d => styleStatus(d, d.row.raw && d.row.raw._r),
+    });
+    y = tableBottom() + 12;
+  }
+
+  // ── Full schedule by property ──
+  let schedule = opts.includeValid ? records : records.filter(r => r.tier <= 2);
+  ensure(75);   // keep the section title with the first property
+  doc.setTextColor(...C.ink); doc.setFont("helvetica","bold"); doc.setFontSize(14);
+  doc.text(opts.includeValid ? "All certificates by property" : "Certificates due within 30 days, by property", M, y);
+  y += 7;
+  if (!schedule.length) {
+    doc.setFont("helvetica","normal"); doc.setFontSize(fs); doc.setTextColor(...C.ink2);
+    doc.text("No certificates are due within 30 days.", M, y); y += 8;
+  }
+
+  const multiOrg = new Set(schedule.map(r=>r.org)).size > 1;
+  const orgList = multiOrg ? [...new Set(schedule.map(r=>r.org))].sort() : [null];
+  for (const org of orgList) {
+    const orgRows = org ? schedule.filter(r=>r.org===org) : schedule;
+    if (org) {
+      const first = groupByProperty(orgRows)[0];
+      ensure(13 + Math.min(22 + first.rows.length * (opts.large ? 13 : 11), 110));
+      doc.setFillColor(...C.navy); doc.rect(M, y, W-M*2, 9, "F");
+      doc.setTextColor(...C.white); doc.setFont("helvetica","bold"); doc.setFontSize(fs+1);
+      doc.text(pdfText(org), M+3, y+6.2);
+      y += 13;
+    }
+    for (const g of groupByProperty(orgRows)) {
+      // keep a property's heading with its table where it fits on one page
+      ensure(Math.min(22 + g.rows.length * (opts.large ? 13 : 11), 110));
+      const gc = countTiers(g.rows);
+      const bits = [`${g.rows.length} certificate${g.rows.length>1?"s":""}`];
+      if (gc[0]) bits.push(`${gc[0]} expired`);
+      if (gc[1]) bits.push(`${gc[1]} urgent`);
+      // property heading
+      doc.setFillColor(...C.soft); doc.rect(M, y, W-M*2, 10, "F");
+      doc.setFillColor(...PDF_TIER[worstTier(g.rows)].bar || C.line); doc.rect(M, y, 1.8, 10, "F");
+      doc.setTextColor(...C.ink); doc.setFont("helvetica","bold"); doc.setFontSize(fs+0.5);
+      const addr = doc.splitTextToSize(pdfText(g.address), W-M*2-60)[0];
+      doc.text(addr, M+4.5, y+6.6);
+      doc.setFont("helvetica","normal"); doc.setFontSize(fs-1); doc.setTextColor(...C.muted);
+      doc.text(bits.join("  |  "), W-M-3, y+6.6, {align:"right"});
+      y += 10;
+      doc.autoTable({
+        ...baseTable, startY: y,
+        headStyles: {...baseTable.headStyles, fillColor:[71,85,105]},
+        columns: [{header:"Certificate", dataKey:"desc"},{header:"Expiry date", dataKey:"exp"},{header:"Status", dataKey:"status"}],
+        body: g.rows.map(r => ({desc:pdfText(r.desc), exp:r.expiry, status:statusCell(r), _r:r})),
+        columnStyles: {desc:{cellWidth:"auto"}, exp:{cellWidth:32}, status:{cellWidth:38}},
+        didParseCell: d => styleStatus(d, d.row.raw && d.row.raw._r),
+      });
+      y = tableBottom() + 8;
+    }
+  }
+
+  // ── Key ──
+  ensure(40);
+  y += 2;
+  doc.setTextColor(...C.ink); doc.setFont("helvetica","bold"); doc.setFontSize(12);
+  doc.text("How to read the status", M, y); y += 3;
+  doc.autoTable({
+    ...baseTable, startY: y, showHead:"never",
+    styles: {...baseTable.styles, fontSize: fs-0.5},
+    columns: [{dataKey:"status"},{dataKey:"meaning"}],
+    body: TIERS.map(t => ({status:t.short, meaning:t.meaning, _t:t.id})),
+    columnStyles: {status:{cellWidth:34}},
+    didParseCell: d => { if (d.column.dataKey==="status" && d.row.raw) { const p = PDF_TIER[d.row.raw._t]; d.cell.styles.fillColor = p.fill; d.cell.styles.textColor = p.text; d.cell.styles.fontStyle="bold"; } },
+  });
+  y = tableBottom() + 6;
+  doc.setFont("helvetica","normal"); doc.setFontSize(fs-1.5); doc.setTextColor(...C.muted);
+  doc.text(doc.splitTextToSize("Days are counted from the report date. Statuses are shown in words as well as colour, so this report can be read in black and white.", W-M*2), M, y);
+
+  // ── Running header + footer on every page ──
+  const total = doc.getNumberOfPages();
+  for (let i = 1; i <= total; i++) {
+    doc.setPage(i);
+    if (i > 1) {
+      doc.setTextColor(...C.navy); doc.setFont("helvetica","bold"); doc.setFontSize(10);
+      doc.text(pdfText(`${title} - ${scopeName}`), M, 13);
+      doc.setFont("helvetica","normal"); doc.setTextColor(...C.muted);
+      doc.text(genDate, W-M, 13, {align:"right"});
+      doc.setDrawColor(...C.navy); doc.setLineWidth(0.5); doc.line(M, 16, W-M, 16);
+    }
+    doc.setDrawColor(...C.line); doc.setLineWidth(0.3); doc.line(M, H-14, W-M, H-14);
+    doc.setTextColor(...C.muted); doc.setFont("helvetica","normal"); doc.setFontSize(9);
+    doc.text(pdfText(`${scopeName}  |  Generated ${genDate}`), M, H-8.5);
+    doc.setFont("helvetica","bold");
+    doc.text(`Page ${i} of ${total}`, W-M, H-8.5, {align:"right"});
+  }
+  return doc;
+}
+
+const pdfFileName = scope => `${slug(scope)}_Certificate_Expiry_${isoDate(new Date())}.pdf`;
+
+function buildPdfCards() {
+  const canShare = !!(navigator.canShare && window.File);
+  document.getElementById("orgCardList").innerHTML = orgs().map(org => {
+    const rows = allData.filter(r=>r.org===org), c = countTiers(rows), id = slug(org);
+    return `<div class="org-card">
+      <div style="display:flex;align-items:center;gap:12px">
+        <span class="dot" style="width:12px;height:12px;background:${tierDotColor(worstTier(rows))}" aria-hidden="true"></span>
+        <div><div class="name">${esc(org)}</div>
+          <div class="meta">${rows.length} certificate${rows.length!==1?"s":""}${c[0]?` · <span class="pill exp">${c[0]} expired</span>`:""}${c[1]?` · <span class="pill urg">${c[1]} urgent</span>`:""}${c[2]?` · ${c[2]} due soon`:""}</div></div>
+      </div>
+      <div class="btn-row" style="margin-top:0">
+        <button class="btn btn-sm" onclick="previewOrgPDF('${esc(org)}')">Preview</button>
+        ${canShare?`<button class="btn btn-sm" onclick="shareOrgPDF('${esc(org)}')">Share</button>`:""}
+        <button class="btn btn-primary btn-sm" id="pdfbtn_${id}" onclick="downloadOrgPDF('${esc(org)}')">Download PDF</button>
+      </div></div>`;
+  }).join("");
+}
+
+function flash(btn, text){
+  if (!btn) return;
+  const old = btn.innerHTML, cls = btn.className;
+  btn.textContent = text; btn.className = cls.replace("btn-primary","") + " btn-ok";
+  setTimeout(()=>{ btn.innerHTML = old; btn.className = cls; btn.disabled = false; }, 2500);
+}
+function pdfError(e){ console.error(e); document.getElementById("pdfStatus").innerHTML = `<div class="msg err">Sorry, the PDF couldn't be created: ${esc(e.message||e)}</div>`; }
+
+function downloadOrgPDF(org) {
+  const btn = document.getElementById("pdfbtn_"+slug(org));
+  try {
+    buildReport(allData.filter(r=>r.org===org), org, getPdfOptions()).save(pdfFileName(org));
+    flash(btn, "Downloaded");
+  } catch(e){ pdfError(e); }
+}
+function previewOrgPDF(org) {
+  try {
+    const url = buildReport(allData.filter(r=>r.org===org), org, getPdfOptions()).output("bloburl");
+    window.open(url, "_blank");
+  } catch(e){ pdfError(e); }
+}
+async function shareOrgPDF(org) {
+  try {
+    const blob = buildReport(allData.filter(r=>r.org===org), org, getPdfOptions()).output("blob");
+    const file = new File([blob], pdfFileName(org), {type:"application/pdf"});
+    if (navigator.canShare && navigator.canShare({files:[file]})) await navigator.share({files:[file], title:`Certificate Expiry Report - ${org}`});
+    else downloadOrgPDF(org);
+  } catch(e){ if (e.name !== "AbortError") pdfError(e); }
+}
+function downloadCombined() {
+  try {
+    buildReport(allData, "All organisations", getPdfOptions()).save(pdfFileName("All_Organisations"));
+    flash(document.getElementById("btnCombined"), "Downloaded");
+  } catch(e){ pdfError(e); }
+}
+async function downloadZip() {
+  const btn = document.getElementById("btnZip");
+  btn.disabled = true; btn.textContent = "Building…";
+  try {
+    const zip = new JSZip(), opts = getPdfOptions();
+    for (const org of orgs()) zip.file(pdfFileName(org), buildReport(allData.filter(r=>r.org===org), org, opts).output("arraybuffer"));
+    const blob = await zip.generateAsync({type:"blob"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = `Certificate_Reports_${isoDate(new Date())}.zip`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+    btn.textContent = "Download all (.zip)"; flash(btn, "Downloaded");
+  } catch(e){ btn.disabled = false; btn.textContent = "Download all (.zip)"; pdfError(e); }
+}
+
+// ═════════════ EMAIL ═════════════
+function buildEmailOrgs(){
+  const sel = document.getElementById("emailOrg");
+  sel.innerHTML = `<option value="ALL">All organisations</option>` + orgs().map(o=>`<option>${esc(o)}</option>`).join("");
+}
+function prepEmail() {
+  const org = document.getElementById("emailOrg").value || "ALL";
+  const toEl = document.getElementById("emailTo");
+  const known = org === "ALL" ? "" : ((MAP.find(m => m.org === org && m.email) || {}).email || "");
+  if (!toEl.value || toEl.dataset.auto === "1") { toEl.value = known; toEl.dataset.auto = known ? "1" : ""; }
+  const rows = (org==="ALL" ? allData : allData.filter(r=>r.org===org)).filter(r=>r.tier<=1);
+  const byOrg = {};
+  for (const r of rows.sort((a,b)=>sortKey(a)-sortKey(b))) (byOrg[r.org] ||= []).push(r);
+  const blocks = Object.entries(byOrg).map(([o, list]) =>
+    `${o}\n` + list.map(r => `  - ${r.address}\n    ${r.desc}: expires ${r.expiry} (${r.label.toUpperCase()}, ${r.detail})`).join("\n")).join("\n\n");
+  const scope = org==="ALL" ? "" : ` - ${org}`;
+  document.getElementById("emailSubj").value = rows.length
+    ? `Certificate expiry alert${scope}: ${rows.length} item${rows.length!==1?"s":""} need action`
+    : `Certificate expiry update${scope}: nothing urgent`;
+  document.getElementById("emailBody").value = rows.length
+    ? `Hi,\n\nThe following certificates have expired or will expire within 14 days and need renewing:\n\n${blocks}\n\nPlease arrange renewals as soon as possible and send over the new certificates once received.\n\nKind regards`
+    : `Hi,\n\nGood news: none of the certificates${org==="ALL"?"":` for ${org}`} have expired or are due in the next 14 days.\n\nKind regards`;
+}
+function openMailClient() {
+  const to = document.getElementById("emailTo").value.trim();
+  const subj = encodeURIComponent(document.getElementById("emailSubj").value);
+  const body = encodeURIComponent(document.getElementById("emailBody").value);
+  window.location.href = `mailto:${encodeURIComponent(to)}?subject=${subj}&body=${body}`;
+}
+async function copyEmailBody() {
+  try { await navigator.clipboard.writeText(document.getElementById("emailBody").value); showEmailStatus("Copied to clipboard.", true); }
+  catch { showEmailStatus("Couldn't copy automatically. Select the text and copy it manually.", false); }
+}
+function showEmailStatus(msg, ok) {
+  const el = document.getElementById("emailStatusMsg");
+  el.innerHTML = `<div class="msg ${ok?"ok":"err"}">${esc(msg)}</div>`;
+  setTimeout(()=>el.innerHTML="", 3500);
+}
+
+// ═════════════ ASSIGN UNMATCHED ═════════════
+function buildAssign(){
+  const addrs = [...new Set(allData.filter(r=>r.org===UNMATCHED).map(r=>r.address))];
+  const known = [...new Set([...MAP.map(m=>m.org), ...Object.values(manualOrg)])].sort();
+  document.getElementById("assignList").innerHTML = addrs.length ? addrs.map((a,i)=>`
+    <div class="assign-row"><label for="as_${i}" style="font-size:14px">${esc(a)}</label>
+      <select id="as_${i}" data-addr="${esc(a)}"><option value="">Leave unassigned</option>${known.map(o=>`<option>${esc(o)}</option>`).join("")}<option value="__new">New organisation…</option></select></div>`).join("")
+    : `<div class="notice ok">Every address is matched to an organisation.</div>`;
+}
+function applyAssignments(){
+  document.querySelectorAll("#assignList select").forEach(sel=>{
+    let v = sel.value;
+    if (v === "__new") v = (prompt(`Organisation name for:\n${sel.dataset.addr}`) || "").trim().toUpperCase();
+    if (v) manualOrg[sel.dataset.addr] = v;
+  });
+  refreshAll();
+  showScreen(allData.some(r=>r.org===UNMATCHED) ? "assign" : "results");
+}
+
+// ═════════════ SCREENS ═════════════
+function showScreen(name) {
+  ["upload","results","pdfs","email","assign"].forEach(s=>{
+    document.getElementById("screen"+s[0].toUpperCase()+s.slice(1)).classList.toggle("hidden", s!==name);
+  });
+  document.querySelectorAll(".nav-btn").forEach(b => b.dataset.screen===name ? b.setAttribute("aria-current","page") : b.removeAttribute("aria-current"));
+  window.scrollTo({top:0});
+}
+function showLoading(msg) {
+  document.getElementById("loadingMsg").innerHTML = `<div class="loading"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin" aria-hidden="true"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>${esc(msg)}</div>`;
+}
+function hideLoading(){ document.getElementById("loadingMsg").innerHTML = ""; }
+function resetApp() {
+  allData=[]; activeOrg="ALL"; activeTier=null;
+  document.getElementById("fileList").innerHTML="";
+  document.getElementById("fileList").classList.add("hidden");
+  document.getElementById("fileInput").value="";
+  document.getElementById("searchBox").value="";
+  document.getElementById("newUploadBtn").classList.add("hidden");
+  document.getElementById("nav").classList.add("hidden");
+  hideLoading();
+  showScreen("upload");
+}
+</script>
+</body>
+</html>
