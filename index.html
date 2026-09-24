@@ -180,6 +180,10 @@
         <button class="btn" onclick="downloadTemplate()">Blank template</button>
         <input type="file" id="mapInput" accept=".csv,.xlsx,.xls" class="sr-only" tabindex="-1" onchange="loadMappingFiles(this.files)" aria-labelledby="mapTitle"/>
       </div>
+      <div class="maprow">
+        <label class="check" style="flex:1"><input type="checkbox" id="optRemember" onchange="toggleRemember(this.checked)"/><span>Remember on this device<small>Keeps the list in this browser only, so it loads by itself next time. Don't tick this on a shared computer.</small></span></label>
+        <button class="btn btn-sm hidden" id="forgetBtn" onclick="forgetMapping()">Forget saved list</button>
+      </div>
     </div>
     <div class="card">
       <h2 class="section-title" id="upTitle"><span class="step" aria-hidden="true">2</span>Upload your certificate report</h2>
@@ -200,7 +204,7 @@
       <div id="loadingMsg" role="status" aria-live="polite"></div>
     </div>
     <p class="privacy"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="flex-shrink:0;margin-top:2px"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>
-      <span>Private by design: your files are read in this browser only. Nothing is uploaded, saved or sent anywhere, and closing or refreshing the page clears everything.</span></p>
+      <span>Private by design: your files are read in this browser only. Nothing is uploaded or sent anywhere. Reports are never saved; your address list is only kept, in this browser, if you tick "Remember on this device".</span></p>
   </section>
 
   <!-- RESULTS -->
@@ -396,13 +400,55 @@ async function readTable(file){
   for (const n of wb.SheetNames) rows.push(...XLSX.utils.sheet_to_json(wb.Sheets[n], {header:1, defval:"", raw:true}));
   return rows;
 }
-function setMapping(list, name){
+function setMapping(list, name, remembered){
   MAP = list; mapFileName = name;
   const el = document.getElementById("mapStatus");
   const orgCount = new Set(list.map(m => m.org)).size;
   el.className = "mapstat ok";
-  el.textContent = `Loaded ${name}: ${list.length} address${list.length!==1?"es":""} across ${orgCount} organisation${orgCount!==1?"s":""}.`;
+  el.textContent = `${remembered ? "Remembered on this device" : "Loaded " + name}: ${list.length} address${list.length!==1?"es":""} across ${orgCount} organisation${orgCount!==1?"s":""}.`;
+  if (!remembered) persistIfRemembered();
   if (allData.length) refreshAll();
+}
+// ── Optional "remember on this device" (browser storage on this device only; never sent anywhere) ──
+const STORE_KEY = "certExpiryManager.addressList.v1";
+function storeGet(){ try { return JSON.parse(localStorage.getItem(STORE_KEY) || "null"); } catch(e) { return null; } }
+function storeSet(v){ try { localStorage.setItem(STORE_KEY, JSON.stringify(v)); return true; } catch(e) { return false; } }
+function storeDel(){ try { localStorage.removeItem(STORE_KEY); } catch(e) {} }
+function persistIfRemembered(){
+  if (!document.getElementById("optRemember").checked) return;
+  if (!MAP.length && !Object.keys(manualOrg).length) return;
+  const ok = storeSet({name: mapFileName, list: MAP, manual: manualOrg, saved: Date.now()});
+  document.getElementById("forgetBtn").classList.toggle("hidden", !ok);
+}
+function toggleRemember(on){
+  if (on) {
+    persistIfRemembered();
+    if (!storeGet() && (MAP.length || Object.keys(manualOrg).length)) {
+      document.getElementById("optRemember").checked = false;
+      alert("This browser won't let the site save anything (for example in a private window), so the list can't be remembered here.");
+    }
+  } else {
+    storeDel(); document.getElementById("forgetBtn").classList.add("hidden");
+  }
+}
+function forgetMapping(){
+  storeDel();
+  MAP = []; mapFileName = "";
+  for (const k of Object.keys(manualOrg)) delete manualOrg[k];
+  document.getElementById("optRemember").checked = false;
+  document.getElementById("forgetBtn").classList.add("hidden");
+  const el = document.getElementById("mapStatus");
+  el.className = "mapstat none"; el.textContent = "Saved list deleted from this device. Load an address list to continue.";
+  if (allData.length) refreshAll();
+}
+function restoreRemembered(){
+  const saved = storeGet();
+  if (!saved || !Array.isArray(saved.list)) return;
+  document.getElementById("optRemember").checked = true;
+  document.getElementById("forgetBtn").classList.remove("hidden");
+  Object.assign(manualOrg, saved.manual || {});
+  if (saved.list.length) setMapping(saved.list, saved.name || "address_list.csv", true);
+  else { const el = document.getElementById("mapStatus"); el.className = "mapstat ok"; el.textContent = `Remembered on this device: ${Object.keys(manualOrg).length} assigned address(es).`; }
 }
 async function loadMappingFiles(files){
   const f = files && files[0]; if (!f) return;
@@ -951,6 +997,7 @@ function applyAssignments(){
     if (v === "__new") v = (prompt(`Organisation name for:\n${sel.dataset.addr}`) || "").trim().toUpperCase();
     if (v) manualOrg[sel.dataset.addr] = v;
   });
+  persistIfRemembered();
   refreshAll();
   showScreen(allData.some(r=>r.org===UNMATCHED) ? "assign" : "results");
 }
@@ -978,6 +1025,7 @@ function resetApp() {
   hideLoading();
   showScreen("upload");
 }
+restoreRemembered();
 </script>
 </body>
 </html>
